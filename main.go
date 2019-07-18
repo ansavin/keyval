@@ -2,7 +2,7 @@ package main
 
 import (
 	"bufio"
-    "fmt"
+	"fmt"
 	"net"
 	"strings"
 )
@@ -10,60 +10,108 @@ import (
 var storage map[string]string
 
 var addr string = ":1234"
+var debug bool = true
 
-func handle(conn net.Conn) error {
-    defer func() {
-        fmt.Printf("Closing connection from %v \n", conn.RemoteAddr())
-        conn.Close()
-    }()
-    r := bufio.NewReader(conn)
-    w := bufio.NewWriter(conn)
-    scanr := bufio.NewScanner(r)
-	loop:
-		for {
-			scanned := scanr.Scan()
-			if !scanned {
-				if err := scanr.Err(); err != nil {
-					fmt.Printf("%v(%v)\n", err, conn.RemoteAddr())
-					return err
-				}
-				break
-			}
-			data := strings.Fields(scanr.Text())
-			switch cmd := data[0]; cmd {
-				case "set":
-					upload_to_storage(data[1:])
-				case "show":
-					for key, value := range storage {
-						w.WriteString(fmt.Sprintf("%v: %v\n", key, value))
-						}
-					w.Flush()
-				case "quit":
-					break loop
-				case "get":
-					key, value := find_data_by_key(data)
-					if key != "" && value != "" {
-						w.WriteString(fmt.Sprintf("%v: %v\n", key, value))
-						w.Flush()
-					} else {
-						w.WriteString(fmt.Sprintf("storage key not found or not specified\n"))
-						w.Flush()
-					}
-				case "del":
-					key, value := find_data_by_key(data)
-					if key != "" && value != "" {
-						delete(storage,key)
-					} else {
-						w.WriteString(fmt.Sprintf("storage key not found or not specified\n"))
-						w.Flush()
-					}
-				default:
-					w.WriteString(fmt.Sprintf("wrong cmd: %v \n", cmd))
-					w.Flush()
-					break loop
-			}
+type writer_to_connection interface {
+	WriteString(string) (int, error)
+	Flush() error
+}
+
+type connection_reader interface {
+}
+
+func listen_to(conn net.Conn) error {
+
+	defer func() {
+		fmt.Printf("Closing connection from %v \n", conn.RemoteAddr())
+		conn.Close()
+	}()
+	writer := bufio.NewWriter(conn)
+loop:
+	for {
+		data, err := wait_foe_request(conn)
+		if err != nil {
+			send_responce(writer, err.Error())
 		}
-    return nil
+		if len(data) < 1 {
+			send_responce(writer, "No command was specified")
+			break loop
+		}
+		if debug {
+			fmt.Println("Handling request", data)
+		}
+		switch command := data[0]; command {
+		case "set":
+			upload_to_storage(data[1:])
+		case "show":
+			print_storage_data(writer)
+		case "help":
+			print_help(writer)
+		case "quit":
+			break loop
+		case "get":
+			get_key(writer, data[1:])
+		case "del":
+			delete_key(data)
+		default:
+			send_responce(writer, fmt.Sprintf("Wrong command: %v \n", command))
+			break loop
+		}
+	}
+	return nil
+}
+
+func wait_foe_request(conn net.Conn) ([]string, error) {
+	reader := bufio.NewReader(conn)
+	scaner := bufio.NewScanner(reader)
+	scanned := scaner.Scan()
+	if !scanned {
+		if err := scaner.Err(); err != nil {
+			return nil, fmt.Errorf("%v(%v)\n", err, conn.RemoteAddr())
+		}
+	}
+	data := strings.Fields(scaner.Text())
+	return data, nil
+}
+
+func send_responce(writer writer_to_connection, message string) {
+	writer.WriteString(message)
+	writer.Flush()
+}
+
+func print_help(writer writer_to_connection) {
+
+	message := `
+	Usage: 
+	set <key> <value>
+	get <key>
+	del <key>
+	show
+	help
+	quit
+	`
+	message += "\n"
+	send_responce(writer, message)
+}
+func print_storage_data(writer writer_to_connection) {
+	var message string
+	for key, value := range storage {
+		message += fmt.Sprintf("%v: %v\n", key, value)
+	}
+	send_responce(writer, message)
+}
+
+func delete_key(data []string) error {
+	key, value, err := find_data_by_key(data[1:])
+	if err != nil {
+		return err
+	}
+	if key != "" && value != "" {
+		delete(storage, key)
+		return nil
+	} else {
+		return fmt.Errorf("storage key not found or not specified")
+	}
 }
 
 func upload_to_storage(data []string) {
@@ -77,37 +125,44 @@ func upload_to_storage(data []string) {
 	}
 }
 
-func find_data_by_key(data []string) (string, string) {
-	if  len(data) <= 1 {
-		fmt.Println("Server error: no storage key specified\n")
-		return "", ""
+func find_data_by_key(data []string) (string, string, error) {
+	if len(data) < 1 {
+		return "", "", fmt.Errorf("Server error: no storage key specified")
 	} else {
-		key := data[1]
+		key := data[0]
 		value, ok := storage[key]
 		if !ok {
-			fmt.Printf("Server error: wrong storage key: %v \n", key)
-			return "", ""
+			return "", "", fmt.Errorf("Server error: wrong storage key: %v", key)
 		}
-		return key, value
+		return key, value, nil
+	}
+}
+
+func get_key(writer writer_to_connection, data []string) {
+	key, value, err := find_data_by_key(data)
+	if err == nil {
+		send_responce(writer, fmt.Sprintf("%v: %v\n", key, value))
+	} else {
+		send_responce(writer, fmt.Sprintf("storage key not found or not specified\n"))
 	}
 }
 
 func main() {
 	storage = make(map[string]string)
 	listener, err := net.Listen("tcp", addr)
-    if err != nil {
-		panic(err) 
+	if err != nil {
+		panic(err)
 	} else {
 		fmt.Printf("Runnig key-value server on port %v \n", addr)
 	}
 	for {
-		conn, err := listener.Accept()
+		connection, err := listener.Accept()
 		if err != nil {
 			fmt.Printf("Server error: failed to accept connection %v\n", err)
 			continue
 		}
-		fmt.Printf("accepted connection from %v\n", conn.RemoteAddr())
-		handle(conn) 
+		fmt.Printf("accepted connection from %v\n", connection.RemoteAddr())
+		listen_to(connection)
 	}
 	listener.Close()
 }
