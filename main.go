@@ -9,18 +9,18 @@ import (
 
 var storage map[string]string
 
-var addr string = ":1234"
-var debug bool = true
+var addr = ":1234"
+var debug = true
 
-type writer_to_connection interface {
+type writerToConnection interface {
 	WriteString(string) (int, error)
 	Flush() error
 }
 
-type connection_reader interface {
+type connectionReader interface {
 }
 
-func listen_to(conn net.Conn) error {
+func listenTo(conn net.Conn) error {
 
 	defer func() {
 		fmt.Printf("Closing connection from %v \n", conn.RemoteAddr())
@@ -29,12 +29,12 @@ func listen_to(conn net.Conn) error {
 	writer := bufio.NewWriter(conn)
 loop:
 	for {
-		data, err := wait_foe_request(conn)
+		data, err := waitForRequest(conn)
 		if err != nil {
-			send_responce(writer, err.Error())
+			sendResponce(writer, err.Error())
 		}
 		if len(data) < 1 {
-			send_responce(writer, "No command was specified")
+			sendResponce(writer, "No command was specified")
 			break loop
 		}
 		if debug {
@@ -42,44 +42,44 @@ loop:
 		}
 		switch command := data[0]; command {
 		case "set":
-			upload_to_storage(data[1:])
+			uploadToStorage(data[1:])
 		case "show":
-			print_storage_data(writer)
+			printStorageData(writer)
 		case "help":
-			print_help(writer)
+			printHelp(writer)
 		case "quit":
 			break loop
 		case "get":
-			get_key(writer, data[1:])
+			getKey(writer, data[1:])
 		case "del":
-			delete_key(data)
+			deleteKey(data)
 		default:
-			send_responce(writer, fmt.Sprintf("Wrong command: %v \n", command))
+			sendResponce(writer, fmt.Sprintf("Wrong command: %v \n", command))
 			break loop
 		}
 	}
 	return nil
 }
 
-func wait_foe_request(conn net.Conn) ([]string, error) {
+func waitForRequest(conn net.Conn) ([]string, error) {
 	reader := bufio.NewReader(conn)
 	scaner := bufio.NewScanner(reader)
 	scanned := scaner.Scan()
 	if !scanned {
 		if err := scaner.Err(); err != nil {
-			return nil, fmt.Errorf("%v(%v)\n", err, conn.RemoteAddr())
+			return nil, fmt.Errorf("%v(%v)", err, conn.RemoteAddr())
 		}
 	}
 	data := strings.Fields(scaner.Text())
 	return data, nil
 }
 
-func send_responce(writer writer_to_connection, message string) {
+func sendResponce(writer writerToConnection, message string) {
 	writer.WriteString(message)
 	writer.Flush()
 }
 
-func print_help(writer writer_to_connection) {
+func printHelp(writer writerToConnection) {
 
 	message := `
 	Usage: 
@@ -91,30 +91,29 @@ func print_help(writer writer_to_connection) {
 	quit
 	`
 	message += "\n"
-	send_responce(writer, message)
+	sendResponce(writer, message)
 }
-func print_storage_data(writer writer_to_connection) {
+func printStorageData(writer writerToConnection) {
 	var message string
 	for key, value := range storage {
 		message += fmt.Sprintf("%v: %v\n", key, value)
 	}
-	send_responce(writer, message)
+	sendResponce(writer, message)
 }
 
-func delete_key(data []string) error {
-	key, value, err := find_data_by_key(data[1:])
+func deleteKey(data []string) error {
+	key, value, err := findDataByKey(data[1:])
 	if err != nil {
 		return err
 	}
 	if key != "" && value != "" {
 		delete(storage, key)
 		return nil
-	} else {
-		return fmt.Errorf("storage key not found or not specified")
 	}
+	return fmt.Errorf("storage key not found or not specified")
 }
 
-func upload_to_storage(data []string) {
+func uploadToStorage(data []string) {
 	for index := 0; index < len(data); index++ {
 		key := index
 		if index++; index >= len(data) {
@@ -125,7 +124,7 @@ func upload_to_storage(data []string) {
 	}
 }
 
-func find_data_by_key(data []string) (string, string, error) {
+func findDataByKey(data []string) (string, string, error) {
 	if len(data) < 1 {
 		return "", "", fmt.Errorf("Server error: no storage key specified")
 	} else {
@@ -138,12 +137,12 @@ func find_data_by_key(data []string) (string, string, error) {
 	}
 }
 
-func get_key(writer writer_to_connection, data []string) {
-	key, value, err := find_data_by_key(data)
+func getKey(writer writerToConnection, data []string) {
+	key, value, err := findDataByKey(data)
 	if err == nil {
-		send_responce(writer, fmt.Sprintf("%v: %v\n", key, value))
+		sendResponce(writer, fmt.Sprintf("%v:%v\n", key, value))
 	} else {
-		send_responce(writer, fmt.Sprintf("storage key not found or not specified\n"))
+		sendResponce(writer, fmt.Sprintf("storage key not found or not specified\n"))
 	}
 }
 
@@ -162,7 +161,6 @@ func main() {
 			continue
 		}
 		fmt.Printf("accepted connection from %v\n", connection.RemoteAddr())
-		listen_to(connection)
+		listenTo(connection)
 	}
-	listener.Close()
 }
